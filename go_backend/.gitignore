@@ -1,0 +1,27 @@
+# ignore local temporary files
+/tmp/*
+
+# Go build artifacts
+/bin/
+/build/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test/coverage output
+*.out
+coverage.out
+
+# Environment files
+.env
+.env.*
+
+# IDE/editor folders
+.vscode/
+.idea/
+
+# Local database snapshots
+*.rdb
