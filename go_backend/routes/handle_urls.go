@@ -9,6 +9,7 @@ func UrlRoutes(r *gin.Engine) {
 	r.GET("/", GetHome)
 	r.POST("/create-short-url", CreateShortUrl)
 	r.GET("/:shortUrl", GetShortUrl)
+	r.GET("/stats/:shortUrl", GetStats)
 }
 
 func GetHome(c *gin.Context) {
@@ -22,4 +23,8 @@ func CreateShortUrl(c *gin.Context) {
 
 func GetShortUrl(c *gin.Context) {
 	handler.HandleShortUrlRedirect(c)
+}
+
+func GetStats(c *gin.Context) {
+	handler.GetUrlStats(c)
 }

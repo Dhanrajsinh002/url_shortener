@@ -8,11 +8,13 @@ const API_BASE = "http://localhost:8000";
 type CreateShortUrlResponse = {
   message: string;
   short_url: string;
+  click_count: string;
 };
 
 function App() {
   const [longUrl, setLongUrl] = useState("");
   const [shortUrl, setShortUrl] = useState("");
+  const [clickCount, setClickCount] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -27,13 +29,17 @@ function App() {
     setLoading(true);
     setError("");
     setShortUrl("");
+    setClickCount("");
     setCopied(false);
 
     axios
       .post<CreateShortUrlResponse>(`${API_BASE}/create-short-url`, {
         long_url: trimmed,
       })
-      .then((response) => setShortUrl(response.data.short_url))
+      .then((response) => {
+        setShortUrl(response.data.short_url);
+        setClickCount(response.data.click_count);
+      })
       .catch((err) => {
         const message =
           err?.response?.data?.error ??
@@ -81,6 +87,12 @@ function App() {
             {shortUrl}
           </a>
           <Button label={copied ? "Copied!" : "Copy"} click={handleCopy} />
+        </div>
+      )}
+
+      {clickCount && (
+        <div className="result">
+          Total Clicks: {clickCount}
         </div>
       )}
     </main>

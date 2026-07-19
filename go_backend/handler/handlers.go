@@ -5,7 +5,6 @@ import (
 	"github.com/Dhanrajsinh002/go-url-shortener/shortener"
 	"github.com/Dhanrajsinh002/go-url-shortener/store"
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis"
 )
 
 // Request model definition
@@ -37,7 +36,7 @@ func HandleShortUrlRedirect(c *gin.Context) {
 	shortUrl := c.Param("shortUrl")
 
 	initialUrl, err := store.RetrieveInitialUrl(shortUrl)
-	if err == redis.Nil {
+	if err == store.ErrNotFound {
 		// Key was not in Redis -> this short code does not exist.
 		c.JSON(http.StatusNotFound, gin.H{"error": ""})
 		return
@@ -49,4 +48,24 @@ func HandleShortUrlRedirect(c *gin.Context) {
 	}
 
 	c.Redirect(http.StatusFound, initialUrl)
+}
+
+func GetUrlStats(c *gin.Context) {
+	shortUrl := c.Param("shortUrl")
+
+	count, err := store.GetClickCount(shortUrl)
+	if err == store.ErrNotFound {
+		c.JSON(http.StatusNotFound, gin.H{ "error": "short url not found" })
+		return
+	}
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{ "error": "" })
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"short_url": shortUrl,
+		"click_count": count,
+	})
 }

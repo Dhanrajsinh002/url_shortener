@@ -1,15 +1,27 @@
 package store
 
 import (
-	"github.com/go-redis/redis"
-	"github.com/stretchr/testify/assert"
+	"os"
 	"testing"
+
+	"github.com/joho/godotenv"
+	"github.com/stretchr/testify/assert"
 )
 
 var testStoreService = &StorageService{}
 
 func init() {
-	testStoreService = InitializeStore()
+	_ = godotenv.Load("../.env") // adjust path relative to the store package
+	databaseURL := os.Getenv("DATABASE_URL")
+	redisAddr := os.Getenv("REDIS_ADDR")
+	
+	if databaseURL == "" {
+		panic("DATABASE_URL is not set")
+	}
+	if redisAddr == "" {
+		panic("REDIS_ADDR is not set")
+	}
+	testStoreService = InitializeStore(databaseURL, redisAddr)
 }
 
 func TestStoreInit(t *testing.T) {
@@ -32,9 +44,11 @@ func TestInsertionAndRetrieval(t *testing.T) {
 }
 
 func TestRetrieveNotFound(t *testing.T) {
-	// A short code that was never saved should come back as redis.Nil,
-	// which is how the handler decides to return a 404.
+	// A short code that was never saved should come back as ErrNotFound,
+	// which is how the handler decides to return a 404. Previously this
+	// checked redis.Nil directly, but a miss can now originate from either
+	// Redis or Postgres, so the sentinel error abstracts that away.
 	_, err := RetrieveInitialUrl("this-code-does-not-exist")
 
-	assert.Equal(t, redis.Nil, err)
+	assert.Equal(t, ErrNotFound, err)
 }
