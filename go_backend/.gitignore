@@ -17,7 +17,6 @@ coverage.out
 
 # Environment files
 .env
-.env.*
 
 # IDE/editor folders
 .vscode/
