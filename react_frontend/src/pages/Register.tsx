@@ -45,7 +45,7 @@ function Register() {
 
   return (
     <main id="center">
-      <h1>Register Admin</h1>
+      <h1>Register</h1>
 
       <div className="auth-form">
         <input

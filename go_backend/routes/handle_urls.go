@@ -17,7 +17,7 @@ func UrlRoutes(r *gin.Engine, redisClient *redis.Client) {
 
 	r.POST("/admin/register", 
 		middleware.RateLimit(redisClient, "register", 5, time.Hour),
-		func(c *gin.Context) { handler.RegisterAdmin(c) })
+		func(c *gin.Context) { handler.RegisterUser(c) })
 
 	r.POST("/admin/login", 
 		middleware.RateLimit(redisClient, "login", 10, 15*time.Minute),

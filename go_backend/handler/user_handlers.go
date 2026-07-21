@@ -53,6 +53,11 @@ func ListUrls(c *gin.Context) {
 	c.JSON(http.StatusOK, records)
 }
 
+type RegisterRequest struct {
+	Username	string `json:"username" binding:"required,min=3,max=50"`
+	Password	string `json:"password" binding:"required,min=8"`
+}
+
 func RegisterUser(c *gin.Context) {
 	var req RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -102,33 +107,4 @@ func CreateUserShortUrl(c *gin.Context) {
 		"message":   "short url created successfully",
 		"short_url": baseUrl + "/" + shortUrl,
 	})
-}
-
-// RegisterAdmin is gated behind a setup token, not a public sign-up flow.
-// Use it once to create your first admin, then treat ADMIN_SETUP_TOKEN as
-// burned — rotate or remove it (see setup steps below).
-type RegisterRequest struct {
-	Username	string `json:"username" binding:"required,min=3,max=50"`
-	Password	string `json:"password" binding:"required,min=8"`
-}
-
-func RegisterAdmin(c *gin.Context) {
-	var req RegisterRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": formatValidationError(err)})
-		return
-	}
-
-	hash, err := auth.HashPassword(req.Password)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{ "error": "couls not hash password" })
-		return
-	}
-
-	if err := store.CreateUser(req.Username, hash); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{ "error": "could not create admin user" })
-		return
-	}
-
-	c.JSON(http.StatusCreated, gin.H{ "message": "admin created successfully" })
 }
