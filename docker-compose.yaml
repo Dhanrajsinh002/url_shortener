@@ -27,6 +27,8 @@ services:
 
   backend:
     build: ./go_backend
+    env_file:
+      - ./go_backend/.env
     ports:
       - "8000:8000"
     environment:
