@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS idx_urls_admin_id;
+ALTER TABLE urls DROP COLUMN IF EXISTS admin_id;

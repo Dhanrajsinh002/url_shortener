@@ -29,6 +29,10 @@ const CacheDuration = 6 * time.Hour
 // miss can originate from either backend.
 var ErrNotFound = errors.New("short url not found")
 
+func GetRedisClient() *redis.Client {
+	return storeService.redisClient
+}
+
 func InitializeStore(databaseurl string, redisAddr string) *StorageService {
 
 	redisClient := redis.NewClient(&redis.Options{

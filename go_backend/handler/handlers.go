@@ -2,6 +2,8 @@ package handler
 
 import (
 	"net/http"
+	"os"
+
 	"github.com/Dhanrajsinh002/go-url-shortener/shortener"
 	"github.com/Dhanrajsinh002/go-url-shortener/store"
 	"github.com/gin-gonic/gin"
@@ -25,7 +27,10 @@ func CreateShourtUrl(c *gin.Context) {
 		return
 	}
 
-	host := "http://localhost:8000/"
+	host := os.Getenv("BASE_URL")
+	if host == "" {
+		panic("HOST_URL is not set")
+	}
 	c.JSON(200, gin.H{
 		"message" : "short url created successfully",
 		"short_url" : host + shortUrl,

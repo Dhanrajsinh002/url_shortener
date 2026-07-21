@@ -7,7 +7,7 @@ services:
       POSTGRES_DB: urlshortener
     ports:
       - "5432:5432"
-    volumns:
+    volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U urlshortener"]
@@ -28,9 +28,9 @@ services:
   backend:
     build: ./go_backend
     ports:
-      - "8080:8080"
+      - "8000:8000"
     environment:
-      DATABASE_URL: postgres://urlshortener:Admin@123@postgres:5432/urlshortener?sslmode=disable
+      DATABASE_URL: postgres://urlshortener:Admin%40123@postgres:5432/urlshortener?sslmode=disable
     depends_on:
       postgres:
         condition: service_healthy
@@ -44,5 +44,5 @@ services:
     depends_on:
       - backend
 
-volumns:
+volumes:
   pgdata:

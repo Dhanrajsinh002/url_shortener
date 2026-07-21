@@ -31,11 +31,11 @@ func main() {
 	r := gin.Default()
 	r.Use(cors.Default())
 
-	// Register the routes to use them
-	routes.UrlRoutes(r)
-
 	// Initialize redis for storage
 	store.InitializeStore(databaseURL, redisAddr)
+
+	// Register the routes to use them
+	routes.UrlRoutes(r, store.GetRedisClient())
 
 	err := r.Run(":8000")
 	if err != nil {
