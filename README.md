@@ -1,75 +1,112 @@
 # URL Shortener
 
-A full-stack URL shortener application built with Go (backend) and React (frontend). Converts long URLs into short, shareable links, backed by **PostgreSQL** as the source of truth with **Redis** as a caching layer for fast redirects.
+A full-stack URL shortener with **user-scoped link management**. Anyone can shorten a link publicly, but registered users get a personal dashboard to create, track, and own their links — backed by **PostgreSQL** as the source of truth and **Redis** as a caching + rate-limiting layer.
 
 ## 🚀 Features
 
-- **URL Shortening** — convert long URLs into compact, unique short codes
-- **URL Redirect** — access original URLs through short codes, served from cache when possible
-- **RESTful API** — simple backend API for URL operations
-- **Modern UI** — React + TypeScript frontend
-- **CORS Enabled** — cross-origin requests supported for local development
-- **PostgreSQL Storage** — durable, queryable persistence for URL mappings
-- **Redis Caching** — cache-aside layer in front of Postgres for low-latency redirects
+- **Public URL Shortening** — anyone can shorten a link, no account needed
+- **User Accounts** — open self-registration with JWT-based authentication and bcrypt password hashing
+- **Per-User Link Ownership** — logged-in users create links tied to their account and see only their own links on the dashboard
+- **Admin Dashboard** — create short URLs and view click-count analytics for links you own
+- **Atomic Click Tracking** — SQL-level atomic increments (`click_count = click_count + 1`) eliminate race conditions under concurrent redirects
+- **Cache-Aside Architecture** — Redis-first reads with automatic PostgreSQL fallback and cache backfill on a miss
+- **Rate Limiting** — Redis-backed request throttling on registration and login endpoints
 - **Dockerized** — backend, frontend, Postgres, and Redis all run via Docker Compose
 - **Schema Migrations** — versioned SQL migrations via `golang-migrate`
+- **Route-Aware Tab Titles & Favicons** — each page updates the browser tab title/icon dynamically
 
 ## 🏗️ Architecture
 
-```
-React Frontend  →  Go Backend (Gin)  →  Redis (cache)  →  PostgreSQL (source of truth)
+```mermaid
+flowchart TD
+    Client["React Frontend"]
+    API["Go Backend (Gin)"]
+    Redis[("Redis Cache")]
+    Postgres[("PostgreSQL")]
+
+    Client -->|"create / login / redirect"| API
+    API -->|"check cache first"| Redis
+    Redis -.->|"miss - fallback"| Postgres
+    API -->|"writes always go here"| Postgres
+    Postgres -.->|"backfill on miss"| Redis
+    API -->|"302 redirect / JSON response"| Client
 ```
 
-Write path: a new short URL is saved to **Postgres first**, then written to **Redis** as a cache entry.
+```
+React Frontend  →  Go Backend (Gin)  →  Redis (cache + rate limiting)  →  PostgreSQL (source of truth)
+```
 
-Read path (redirect): the backend checks **Redis first**. On a cache hit, it redirects immediately. On a miss, it falls back to **Postgres**, backfills Redis with the result, and then redirects. This means Redis being empty or restarted never causes a broken redirect — it just costs one extra Postgres lookup until the cache warms back up.
+**Write path (public):** short URL saved to Postgres (unowned, `user_id = NULL`), then cached in Redis.
+
+**Write path (authenticated):** short URL saved to Postgres tagged with the creating user's ID, then cached in Redis.
+
+**Read path (redirect):** Redis checked first. On a hit, redirect immediately and increment the click counter. On a miss, fall back to Postgres, backfill Redis, increment the counter, then redirect. Redis being empty or restarted never breaks a redirect — it only costs one extra Postgres lookup until the cache warms back up.
+
+**Authorization:** JWTs carry the authenticated user's ID as a claim. The `/admin/urls` and `/admin/create-short-url` endpoints derive the caller's identity from the verified token — never from a client-supplied parameter — so one user can never see or create links attributed to another.
 
 ## 📋 Prerequisites
 
 - Go 1.21 or higher
 - Node.js 16 or higher (with npm)
-- Docker Desktop (recommended — runs Postgres, Redis, and both services without installing them natively)
+- Docker Desktop (recommended — runs Postgres, Redis, and both services without installing anything natively)
 - [`golang-migrate`](https://github.com/golang-migrate/migrate) CLI, for applying schema migrations
 
 ## 🏗️ Project Structure
 
 ```
 url_shortener/
-├── go_backend/                # Go backend application
-│   ├── main.go                 # Entry point — loads .env, initializes store, starts server
+├── go_backend/
+│   ├── main.go
 │   ├── go.mod / go.sum
-│   ├── Dockerfile               # Multi-stage build for the backend image
-│   ├── .env.example              # Template for local environment variables
-│   ├── handler/                 # Request handlers
-│   │   └── handlers.go
-│   ├── routes/                  # API route definitions
+│   ├── Dockerfile
+│   ├── .env.example
+│   ├── auth/                     # JWT generation/validation, bcrypt hashing
+│   │   └── auth.go
+│   ├── middleware/
+│   │   ├── auth_middleware.go     # Verifies JWT, injects user_id into context
+│   │   └── rate_limit.go          # Redis-backed request throttling
+│   ├── handler/
+│   │   ├── handlers.go            # Public create + redirect + stats
+│   │   ├── user_handlers.go       # Register, login, user-scoped create/list
+│   │   └── errors.go              # Human-readable validation error formatting
+│   ├── routes/
 │   │   └── handle_urls.go
-│   ├── shortener/                # URL shortening logic (SHA-256 + Base58)
+│   ├── shortener/
 │   │   ├── shorturl_generator.go
 │   │   └── shorturl_generator_test.go
-│   ├── store/                    # Storage layer — Postgres + Redis
-│   │   ├── store_service.go        # Postgres (source of truth) + Redis (cache) logic
+│   ├── store/
+│   │   ├── store_service.go        # Postgres (source of truth) + Redis (cache) core logic
+│   │   ├── user_store.go            # User accounts + per-user URL queries
 │   │   └── store_service_test.go
-│   └── migrations/                # Versioned SQL schema migrations
-│       ├── 000001_create_urls_table.up.sql
-│       └── 000001_create_urls_table.down.sql
+│   └── migrations/                  # Versioned SQL schema migrations
+│       ├── 000001_create_urls_table.up.sql / .down.sql
+│       ├── 000002_create_admins_table.up.sql / .down.sql
+│       ├── 000003_add_admin_id_to_urls.up.sql / .down.sql
+│       └── 000004_rename_admins_to_users.up.sql / .down.sql
 │
-├── react_frontend/              # React TypeScript frontend
+├── react_frontend/
 │   ├── src/
-│   ├── public/
+│   │   ├── pages/
+│   │   │   ├── PublicShortener.tsx     # "/" — public shortening form
+│   │   │   ├── Login.tsx                # "/admin/login"
+│   │   │   ├── Register.tsx             # "/admin/register"
+│   │   │   └── AdminDashboard.tsx       # "/admin" — protected, per-user
+│   │   ├── components/
+│   │   │   ├── Header.tsx / Footer.tsx
+│   │   │   ├── ProtectedRoute.tsx       # Redirects logged-out users to /admin/login
+│   │   │   └── PublicOnlyRoute.tsx      # Redirects logged-in users away from public pages
+│   │   ├── api/client.ts                 # Axios instance, auto-attaches JWT
+│   │   └── hooks/usePageMeta.ts           # Per-route tab title + favicon
 │   ├── package.json
-│   ├── Dockerfile                 # Multi-stage build, served via nginx
-│   ├── vite.config.ts
-│   └── tsconfig.json
+│   └── Dockerfile
 │
-└── docker-compose.yml            # Runs postgres, redis, backend, frontend together
+└── docker-compose.yaml
 ```
 
 ## 🔧 Backend Setup (Go)
 
 ### Environment variables
 
-Copy the example file and fill in your local values:
 ```bash
 cd go_backend
 cp .env.example .env
@@ -78,11 +115,15 @@ cp .env.example .env
 `.env` (not committed to git):
 ```
 DATABASE_URL=postgres://urlshortener:devpassword@localhost:5432/urlshortener?sslmode=disable
+REDIS_ADDR=localhost:6379
+BASE_URL=http://localhost:8000
+JWT_SECRET=<a long random string>
 ```
+
+> ⚠️ If your password contains `@` or other URL-reserved characters, URL-encode it in `DATABASE_URL` (`@` → `%40`) or avoid special characters in local dev passwords.
 
 ### Running Postgres and Redis locally (without Docker Compose)
 
-If you want to run the Go server directly with `go run` instead of via Compose, start Postgres and Redis as standalone containers first:
 ```bash
 docker run --name pg-urlshortener -e POSTGRES_USER=urlshortener -e POSTGRES_PASSWORD=devpassword -e POSTGRES_DB=urlshortener -p 5432:5432 -d postgres:16-alpine
 docker run --name redis-urlshortener -p 6379:6379 -d redis:7-alpine
@@ -94,17 +135,12 @@ docker run --name redis-urlshortener -p 6379:6379 -d redis:7-alpine
 migrate -path migrations -database "postgres://urlshortener:devpassword@localhost:5432/urlshortener?sslmode=disable" up
 ```
 
-### Installation
+### Installation & running
 
 ```bash
 cd go_backend
 go mod download
 go mod tidy
-```
-
-### Running the Server
-
-```bash
 go run main.go
 ```
 
@@ -112,44 +148,28 @@ The backend will be available at `http://localhost:8000`
 
 ### API Endpoints
 
-**1. Home Endpoint**
-- Method: `GET`
-- URL: `/`
-- Description: Returns a welcome message
+**Public**
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/` | Welcome message |
+| `POST` | `/create-short-url` | Create an unowned short URL |
+| `GET` | `/:shortUrl` | Redirect (cache-first, click count incremented) |
+| `GET` | `/stats/:shortUrl` | Click count for a given short code |
+| `POST` | `/admin/register` | Create a new user account (rate-limited: 5/hour/IP) |
+| `POST` | `/admin/login` | Log in, returns a JWT (rate-limited: 10/15min/IP) |
 
-**2. Create Short URL**
-- Method: `POST`
-- URL: `/create-short-url`
-- Request Body:
-  ```json
-  { "long_url": "https://example.com/very/long/url" }
-  ```
-- Response:
-  ```json
-  {
-    "message": "short url created successfully",
-    "short_url": "http://localhost:8000/abc123"
-  }
-  ```
-
-**3. Redirect to Original URL**
-- Method: `GET`
-- URL: `/:shortUrl`
-- Description: Checks Redis, falls back to Postgres on a cache miss, then redirects
-- Response: `302` redirect to the original URL, or `404` if the short code doesn't exist in either store
+**Authenticated** (`Authorization: Bearer <token>`)
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/admin/urls` | List only the calling user's short URLs |
+| `POST` | `/admin/create-short-url` | Create a short URL owned by the calling user |
 
 ### Testing
 
 ```bash
 go test ./...
 ```
-
-> ⚠️ The store tests are integration tests — they require a real, migrated Postgres and a running Redis, reachable via `DATABASE_URL`. Make sure both containers are up and the migration has been applied before running tests, or the test binary's `init()` will panic on connection failure.
-
-Run with coverage:
-```bash
-go test -cover ./...
-```
+> The store tests are integration tests — they require a real, migrated Postgres and a running Redis reachable via `DATABASE_URL`/`REDIS_ADDR`.
 
 ## 🎨 Frontend Setup (React + TypeScript)
 
@@ -158,48 +178,40 @@ cd react_frontend
 npm install
 npm run dev
 ```
-
-The frontend will be available at `http://localhost:5173`
-
-Build for production:
-```bash
-npm run build
-```
-
-Lint:
-```bash
-npm run lint
-```
+Available at `http://localhost:5173`. Routes:
+- `/` — public shortener (redirects logged-in users to `/admin`)
+- `/admin/login`, `/admin/register` — auth pages (same redirect behavior)
+- `/admin` — protected dashboard (redirects logged-out users to `/admin/login`)
 
 ## 🐳 Running Everything with Docker Compose
-
-The simplest way to run the full stack — Postgres, Redis, backend, and frontend — together:
 
 ```bash
 docker compose up --build
 ```
-
 - Frontend: `http://localhost:5173`
 - Backend: `http://localhost:8000`
-- Postgres: `localhost:5432` (still reachable from your host for `psql`/migrations)
+- Postgres: `localhost:5432`
 - Redis: `localhost:6379`
 
-Apply migrations against the Compose-managed Postgres (same command as local dev, since the port is still exposed to the host):
+Apply migrations against the Compose-managed Postgres:
 ```bash
 migrate -path go_backend/migrations -database "postgres://urlshortener:devpassword@localhost:5432/urlshortener?sslmode=disable" up
 ```
 
-Stop everything, keeping data:
-```bash
-docker compose down
-```
+Stop everything, keeping data: `docker compose down`
+Stop and **wipe** the Postgres volume: `docker compose down -v`
 
-Stop everything and **wipe** the Postgres data volume:
-```bash
-docker compose down -v
-```
+> Inside Compose, services reach each other by service name (`postgres`, `redis`), not `localhost` — confirm your backend's `REDIS_ADDR` is set to `redis:6379` in the Compose environment, not inherited from a local `.env` meant for `go run`.
 
-> Inside the Compose network, services reach each other by service name, not `localhost` — the backend's `DATABASE_URL` in `docker-compose.yml` points at host `postgres`, not `localhost`, for exactly this reason.
+### Frontend dev workflow while iterating
+
+The frontend's `Dockerfile` builds a static production bundle served by nginx — it has **no hot-reload**. While actively developing the UI, run Postgres/Redis/backend via Compose and the frontend locally instead:
+```bash
+docker compose up postgres redis backend
+# in a second terminal:
+cd react_frontend && npm run dev
+```
+Only rebuild the frontend container (`docker compose up --build frontend`) when testing the real production build.
 
 ## 🔍 Checking Data in Postgres
 
@@ -207,73 +219,37 @@ docker compose down -v
 docker exec -it pg-urlshortener psql -U urlshortener -d urlshortener -c "SELECT * FROM urls;"
 ```
 
-Or drop into an interactive shell:
-```bash
-docker exec -it pg-urlshortener psql -U urlshortener -d urlshortener
-```
-```sql
-\dt                     -- list tables
-\d urls                 -- describe the urls table
-SELECT * FROM urls ORDER BY created_at DESC LIMIT 10;
-```
-
 ## 📦 Technology Stack
 
-**Backend**
-- Gin — web framework for Go
-- PostgreSQL (via `pgx`/`pgxpool`) — durable storage, source of truth
-- Redis (`go-redis`) — cache-aside layer for fast redirects
-- `golang-migrate` — versioned SQL schema migrations
-- Base58 — URL-safe encoding for short codes
-- `godotenv` — loads local `.env` for development
+**Backend:** Gin, PostgreSQL (`pgx`/`pgxpool`), Redis (`go-redis`), `golang-migrate`, JWT (`golang-jwt`), bcrypt, `godotenv`
 
-**Frontend**
-- React 19
-- TypeScript
-- Vite
-- Axios
-- ESLint
-
-## 🔄 Workflow
-
-1. User enters a long URL in the React frontend
-2. Frontend sends a `POST` request to `/create-short-url`
-3. Backend generates a unique short code (SHA-256 hash + Base58 encoding)
-4. Backend writes the mapping to **Postgres** first, then caches it in **Redis**
-5. User receives the short URL and can share it
-6. On visiting the short URL, the backend checks **Redis** first; on a miss it reads **Postgres**, backfills Redis, then redirects
+**Frontend:** React 19, TypeScript, Vite, React Router, Axios, ESLint
 
 ## 🚨 Error Handling
 
-- `400 Bad Request` — invalid input (missing or malformed JSON)
-- `404 Not Found` — short URL does not exist in either Redis or Postgres
-- `500 Internal Server Error` — Postgres or Redis connection/query failure
+- `400` — invalid input or failed validation (human-readable messages, e.g. "password must be at least 8 characters")
+- `401` — invalid credentials or missing/expired JWT
+- `403` — attempting to act outside your own scope
+- `404` — short URL not found in either Redis or Postgres
+- `429` — rate limit exceeded on register/login
+- `500` — Postgres/Redis connection or query failure
 
 ## 🐛 Troubleshooting
 
-**Postgres connection refused**
-Confirm the container is actually running:
-```bash
-docker ps
-```
-If it's not listed, start it (`docker start pg-urlshortener`) or recreate it with the `docker run` command above.
+**Login "succeeds" but the dashboard never loads** — check `localStorage.getItem("admin_token")` in DevTools; a typo in the key name between where it's set (`Login.tsx`) and where it's read (`ProtectedRoute.tsx`, `Header.tsx`) causes a silent redirect loop with no console error.
 
-**Password contains special characters (e.g. `@`)**
-URL-encode it in the connection string — `@` becomes `%40` — or avoid special characters in local dev passwords entirely.
+**Frontend changes don't appear** — if running via `docker compose up --build`, remember the frontend container serves a static build with no hot-reload; rebuild after every change, or run the frontend locally via `npm run dev` instead.
 
-**Port already in use**
-- Postgres: map to a different host port, e.g. `-p 5433:5432`, and update `DATABASE_URL` accordingly
-- Backend: change the port in `go_backend/main.go` (default: `8000`)
-- Frontend: Vite will prompt to use a different port if `5173` is in use
+**Postgres connection refused** — confirm the container is running (`docker ps`); restart with `docker start pg-urlshortener` or recreate it.
 
-**CORS Issues**
-CORS is already enabled in the backend for local development. If issues persist, verify the frontend's URL is allowed in the backend's CORS configuration.
+**Port conflicts** — remap the host side, e.g. `-p 5433:5432`, and update `DATABASE_URL` accordingly.
 
 ## 🔜 Roadmap
 
-- [ ] CI/CD pipeline (GitHub Actions) — lint, test, build, and push Docker images
-- [ ] Kubernetes manifests — Deployments, Services, ConfigMaps/Secrets, Ingress
-- [ ] `/healthz` endpoint for container/orchestrator liveness and readiness probes
+- [ ] CI/CD pipeline (GitHub Actions) — lint, test, build, push Docker images
+- [ ] Kubernetes manifests
+- [ ] `/healthz` endpoint for container/orchestrator probes
+- [ ] Redis-backed JWT revocation (denylist) for "log out everywhere"
 
 ## 📝 License
 
